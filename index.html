@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pong</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #111827;
+      --accent: #f59e0b;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Lucida Sans Unicode", "Lucida Grande", "Lucida Sans", Arial, sans-serif;
+      background: radial-gradient(circle at 20% 10%, #1f2937, #0b0f14 60%);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+    .wrap {
+      width: min(900px, 94vw);
+    }
+    .panel {
+      background: linear-gradient(180deg, #111827, #0b1220);
+      border: 1px solid #1f2937;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .sub {
+      color: var(--muted);
+      margin: 0 0 18px;
+    }
+    .modes {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      background: var(--accent);
+      color: #111827;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(245,158,11,0.4); }
+    .btn:active { transform: translateY(0); }
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    canvas {
+      width: 100%;
+      height: auto;
+      background: #0b0f14;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      display: block;
+    }
+    .hidden { display: none; }
+    .center {
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="menu" class="panel">
+      <h1>Pong</h1>
+      <p class="sub">Choose a goal limit. Player 1: WASD. Player 2: Arrow keys.</p>
+      <div class="modes">
+        <button class="btn" data-goals="3">First to 3</button>
+        <button class="btn" data-goals="5">First to 5</button>
+      </div>
+    </div>
+
+    <div id="game" class="panel hidden">
+      <div class="hud">
+        <div id="score">P1 0 : 0 P2</div>
+        <div id="goal">Goal: 3</div>
+      </div>
+      <canvas id="canvas" width="800" height="450"></canvas>
+      <div class="center sub" id="status"></div>
+    </div>
+  </div>
+
+  <script>
+    const menu = document.getElementById("menu");
+    const game = document.getElementById("game");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const scoreEl = document.getElementById("score");
+    const goalEl = document.getElementById("goal");
+    const statusEl = document.getElementById("status");
+
+    let audioCtx = null;
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+    }
+    function beep(freq, duration, type = "square", gain = 0.08) {
+      if (!audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      g.gain.value = gain;
+      osc.connect(g);
+      g.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration);
+    }
+
+    const state = {
+      running: false,
+      target: 3,
+      scores: [0, 0],
+      lastTime: 0,
+      pause: false,
+    };
+
+    const paddle = (x) => ({
+      x,
+      y: canvas.height / 2 - 45,
+      w: 12,
+      h: 90,
+      speed: 380,
+      dy: 0,
+    });
+
+    const ball = () => ({
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      r: 8,
+      vx: 260 * (Math.random() > 0.5 ? 1 : -1),
+      vy: 160 * (Math.random() * 2 - 1),
+    });
+
+    let left = paddle(30);
+    let right = paddle(canvas.width - 42);
+    let orb = ball();
+
+    const keys = new Set();
+
+    function resetRound(scoredBy) {
+      if (scoredBy !== null) {
+        state.scores[scoredBy] += 1;
+        updateHud();
+        beep(220, 0.12, "sawtooth", 0.1);
+        if (state.scores[scoredBy] >= state.target) {
+          endGame(scoredBy);
+          return;
+        }
+      }
+      left.y = canvas.height / 2 - left.h / 2;
+      right.y = canvas.height / 2 - right.h / 2;
+      orb = ball();
+    }
+
+    function endGame(winner) {
+      state.running = false;
+      statusEl.textContent = `Player ${winner + 1} wins!`;
+      beep(660, 0.18, "triangle", 0.12);
+      setTimeout(() => beep(880, 0.14, "triangle", 0.1), 160);
+      setTimeout(() => {
+        game.classList.add("hidden");
+        menu.classList.remove("hidden");
+        statusEl.textContent = "";
+      }, 1600);
+    }
+
+    function updateHud() {
+      scoreEl.textContent = `P1 ${state.scores[0]} : ${state.scores[1]} P2`;
+      goalEl.textContent = `Goal: ${state.target}`;
+    }
+
+    function clamp(val, min, max) {
+      return Math.max(min, Math.min(max, val));
+    }
+
+    function update(dt) {
+      const speedLeft = (keys.has("KeyW") ? -1 : 0) + (keys.has("KeyS") ? 1 : 0);
+      const speedRight = (keys.has("ArrowUp") ? -1 : 0) + (keys.has("ArrowDown") ? 1 : 0);
+      left.y += speedLeft * left.speed * dt;
+      right.y += speedRight * right.speed * dt;
+      left.y = clamp(left.y, 0, canvas.height - left.h);
+      right.y = clamp(right.y, 0, canvas.height - right.h);
+
+      orb.x += orb.vx * dt;
+      orb.y += orb.vy * dt;
+
+      if (orb.y - orb.r <= 0 || orb.y + orb.r >= canvas.height) {
+        orb.vy *= -1;
+        orb.y = clamp(orb.y, orb.r, canvas.height - orb.r);
+        beep(520, 0.04, "square", 0.05);
+      }
+
+      if (
+        orb.x - orb.r <= left.x + left.w &&
+        orb.y + orb.r >= left.y &&
+        orb.y - orb.r <= left.y + left.h &&
+        orb.vx < 0
+      ) {
+        orb.vx *= -1.05;
+        const impact = (orb.y - (left.y + left.h / 2)) / (left.h / 2);
+        orb.vy += impact * 120;
+        orb.x = left.x + left.w + orb.r;
+        beep(440, 0.05, "square", 0.06);
+      }
+
+      if (
+        orb.x + orb.r >= right.x &&
+        orb.y + orb.r >= right.y &&
+        orb.y - orb.r <= right.y + right.h &&
+        orb.vx > 0
+      ) {
+        orb.vx *= -1.05;
+        const impact = (orb.y - (right.y + right.h / 2)) / (right.h / 2);
+        orb.vy += impact * 120;
+        orb.x = right.x - orb.r;
+        beep(480, 0.05, "square", 0.06);
+      }
+
+      if (orb.x + orb.r < 0) {
+        resetRound(1);
+      } else if (orb.x - orb.r > canvas.width) {
+        resetRound(0);
+      }
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#1f2937";
+      for (let y = 0; y < canvas.height; y += 26) {
+        ctx.fillRect(canvas.width / 2 - 2, y, 4, 14);
+      }
+
+      ctx.fillStyle = "#e5e7eb";
+      ctx.fillRect(left.x, left.y, left.w, left.h);
+      ctx.fillRect(right.x, right.y, right.w, right.h);
+
+      ctx.beginPath();
+      ctx.arc(orb.x, orb.y, orb.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function loop(ts) {
+      if (!state.running) return;
+      const dt = Math.min(0.02, (ts - state.lastTime) / 1000 || 0);
+      state.lastTime = ts;
+      update(dt);
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    function startGame(target) {
+      initAudio();
+      state.target = target;
+      state.scores = [0, 0];
+      updateHud();
+      menu.classList.add("hidden");
+      game.classList.remove("hidden");
+      state.running = true;
+      state.lastTime = performance.now();
+      resetRound(null);
+      requestAnimationFrame(loop);
+    }
+
+    document.querySelectorAll(".btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = Number(btn.dataset.goals);
+        startGame(target);
+      });
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (["ArrowUp", "ArrowDown", "KeyW", "KeyS"].includes(e.code)) {
+        e.preventDefault();
+        keys.add(e.code);
+      }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      keys.delete(e.code);
+    });
+  </script>
+</body>
+</html>
