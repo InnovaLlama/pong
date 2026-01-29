@@ -67,6 +67,28 @@
       margin-bottom: 12px;
       color: var(--muted);
       font-size: 14px;
+      gap: 16px;
+    }
+    .player {
+      min-width: 140px;
+    }
+    .player.right {
+      text-align: right;
+    }
+    .player .name {
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: var(--text);
+    }
+    .player .power {
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.8px;
+    }
+    .scorebox {
+      text-align: center;
+      font-size: 16px;
+      color: var(--text);
     }
     canvas {
       width: 100%;
@@ -95,8 +117,18 @@
 
     <div id="game" class="panel hidden">
       <div class="hud">
-        <div id="score">P1 0 : 0 P2</div>
-        <div id="goal">Goal: 3</div>
+        <div class="player left">
+          <div class="name">P1</div>
+          <div class="power" id="p1-power">Powerup: none</div>
+        </div>
+        <div class="scorebox">
+          <div id="score">0 : 0</div>
+          <div id="goal">Goal: 3</div>
+        </div>
+        <div class="player right">
+          <div class="name">P2</div>
+          <div class="power" id="p2-power">Powerup: none</div>
+        </div>
       </div>
       <canvas id="canvas" width="800" height="450"></canvas>
       <div class="center sub" id="status"></div>
@@ -111,6 +143,8 @@
     const scoreEl = document.getElementById("score");
     const goalEl = document.getElementById("goal");
     const statusEl = document.getElementById("status");
+    const p1PowerEl = document.getElementById("p1-power");
+    const p2PowerEl = document.getElementById("p2-power");
 
     let audioCtx = null;
     function initAudio() {
@@ -140,6 +174,8 @@
       scores: [0, 0],
       lastTime: 0,
       pause: false,
+      time: 0,
+      nextPowerupAt: 0,
     };
 
     const paddle = (x) => ({
@@ -163,6 +199,30 @@
     let right = paddle(canvas.width - 42);
     let orb = ball();
 
+    const players = [
+      {
+        has: null,
+        active: null,
+        shotsLeft: 0,
+        activeUntil: 0,
+        freezeUntil: 0,
+        powerKeyDown: false,
+        powerKeyLocked: false,
+      },
+      {
+        has: null,
+        active: null,
+        shotsLeft: 0,
+        activeUntil: 0,
+        freezeUntil: 0,
+        powerKeyDown: false,
+        powerKeyLocked: false,
+      },
+    ];
+
+    let powerup = null; // { type, x, y, r, color }
+    const freezeShots = [];
+
     const keys = new Set();
 
     function resetRound(scoredBy) {
@@ -178,6 +238,21 @@
       left.y = canvas.height / 2 - left.h / 2;
       right.y = canvas.height / 2 - right.h / 2;
       orb = ball();
+      players[0].active = null;
+      players[1].active = null;
+      players[0].shotsLeft = 0;
+      players[1].shotsLeft = 0;
+      players[0].activeUntil = 0;
+      players[1].activeUntil = 0;
+      players[0].freezeUntil = 0;
+      players[1].freezeUntil = 0;
+      players[0].powerKeyDown = false;
+      players[1].powerKeyDown = false;
+      players[0].powerKeyLocked = false;
+      players[1].powerKeyLocked = false;
+      powerup = null;
+      freezeShots.length = 0;
+      updatePowerDisplays();
     }
 
     function endGame(winner) {
@@ -193,19 +268,95 @@
     }
 
     function updateHud() {
-      scoreEl.textContent = `P1 ${state.scores[0]} : ${state.scores[1]} P2`;
+      scoreEl.textContent = `${state.scores[0]} : ${state.scores[1]}`;
       goalEl.textContent = `Goal: ${state.target}`;
+      updatePowerDisplays();
     }
 
     function clamp(val, min, max) {
       return Math.max(min, Math.min(max, val));
     }
 
+    function powerupLabel(player) {
+      const active = player.active || player.has;
+      if (!active) return "none";
+      const pretty = active === "freeze" ? "Freeze" : "Fire";
+      if (player.active) return `${pretty} (active)`;
+      return pretty;
+    }
+
+    function updatePowerDisplays() {
+      p1PowerEl.textContent = `Powerup: ${powerupLabel(players[0])}`;
+      p2PowerEl.textContent = `Powerup: ${powerupLabel(players[1])}`;
+    }
+
+    function spawnPowerup() {
+      if (powerup) return;
+      const types = [
+        { type: "freeze", color: "#7dd3fc" },
+        { type: "fire", color: "#ef4444" },
+      ];
+      const choice = types[Math.floor(Math.random() * types.length)];
+      const r = 10.5;
+      const safeX = 120;
+      const safeY = 30;
+      const x = Math.random() * (canvas.width - 2 * safeX) + safeX;
+      const y = Math.random() * (canvas.height - 2 * safeY) + safeY;
+      powerup = { type: choice.type, color: choice.color, x, y, r };
+    }
+
+    function tryCollectPowerup() {
+      if (!powerup) return;
+      const dx = orb.x - powerup.x;
+      const dy = orb.y - powerup.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= orb.r + powerup.r) {
+        const owner = orb.lastHit;
+        if (owner === 0 || owner === 1) {
+          players[owner].has = powerup.type;
+          players[owner].active = null;
+          players[owner].shotsLeft = 0;
+          players[owner].activeUntil = 0;
+          if (players[owner].powerKeyDown) {
+            players[owner].powerKeyLocked = true;
+          }
+          beep(240, 0.08, "triangle", 0.08);
+          setTimeout(() => beep(360, 0.06, "triangle", 0.06), 40);
+          powerup = null;
+          state.nextPowerupAt = state.time + 7;
+          updatePowerDisplays();
+        }
+      }
+    }
+
+    function fireFreezeShot(owner) {
+      const p = owner === 0 ? left : right;
+      const dir = owner === 0 ? 1 : -1;
+      freezeShots.push({
+        x: p.x + (owner === 0 ? p.w + 6 : -6),
+        y: p.y + p.h / 2,
+        r: 5,
+        vx: 520 * dir,
+        owner,
+      });
+      players[owner].shotsLeft -= 1;
+      beep(640, 0.05, "square", 0.05);
+    }
+
     function update(dt) {
+      state.time += dt;
+      if (!powerup && state.time >= state.nextPowerupAt) {
+        spawnPowerup();
+      }
+
       const speedLeft = (keys.has("KeyW") ? -1 : 0) + (keys.has("KeyS") ? 1 : 0);
       const speedRight = (keys.has("ArrowUp") ? -1 : 0) + (keys.has("ArrowDown") ? 1 : 0);
-      left.y += speedLeft * left.speed * dt;
-      right.y += speedRight * right.speed * dt;
+      if (state.time >= players[0].freezeUntil) {
+        left.y += speedLeft * left.speed * dt;
+      }
+      if (state.time >= players[1].freezeUntil) {
+        right.y += speedRight * right.speed * dt;
+      }
       left.y = clamp(left.y, 0, canvas.height - left.h);
       right.y = clamp(right.y, 0, canvas.height - right.h);
 
@@ -228,6 +379,15 @@
         const impact = (orb.y - (left.y + left.h / 2)) / (left.h / 2);
         orb.vy += impact * 120;
         orb.x = left.x + left.w + orb.r;
+        orb.lastHit = 0;
+        if (players[0].active === "fire") {
+          orb.vx *= 2;
+          orb.vy *= 2;
+          orb.fireUntil = state.time + 1.2;
+          players[0].active = null;
+          players[0].has = null;
+          updatePowerDisplays();
+        }
         beep(440, 0.05, "square", 0.06);
       }
 
@@ -241,7 +401,47 @@
         const impact = (orb.y - (right.y + right.h / 2)) / (right.h / 2);
         orb.vy += impact * 120;
         orb.x = right.x - orb.r;
+        orb.lastHit = 1;
+        if (players[1].active === "fire") {
+          orb.vx *= 2;
+          orb.vy *= 2;
+          orb.fireUntil = state.time + 1.2;
+          players[1].active = null;
+          players[1].has = null;
+          updatePowerDisplays();
+        }
         beep(480, 0.05, "square", 0.06);
+      }
+
+      tryCollectPowerup();
+
+      for (let i = freezeShots.length - 1; i >= 0; i -= 1) {
+        const shot = freezeShots[i];
+        shot.x += shot.vx * dt;
+        const target = shot.owner === 0 ? right : left;
+        const hit =
+          shot.x + shot.r >= target.x &&
+          shot.x - shot.r <= target.x + target.w &&
+          shot.y + shot.r >= target.y &&
+          shot.y - shot.r <= target.y + target.h;
+        if (hit) {
+          players[shot.owner === 0 ? 1 : 0].freezeUntil = state.time + 2;
+          freezeShots.splice(i, 1);
+          beep(220, 0.08, "sine", 0.08);
+          continue;
+        }
+        if (shot.x < -20 || shot.x > canvas.width + 20) {
+          freezeShots.splice(i, 1);
+        }
+      }
+
+      for (let i = 0; i < 2; i += 1) {
+        if (players[i].active === "freeze" && state.time >= players[i].activeUntil) {
+          players[i].active = null;
+          players[i].shotsLeft = 0;
+          players[i].has = null;
+          updatePowerDisplays();
+        }
       }
 
       if (orb.x + orb.r < 0) {
@@ -263,7 +463,26 @@
       ctx.fillRect(left.x, left.y, left.w, left.h);
       ctx.fillRect(right.x, right.y, right.w, right.h);
 
+      if (powerup) {
+        ctx.fillStyle = powerup.color;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, powerup.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const shot of freezeShots) {
+        ctx.fillStyle = "#7dd3fc";
+        ctx.beginPath();
+        ctx.arc(shot.x, shot.y, shot.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
       ctx.beginPath();
+      if (orb.fireUntil && state.time < orb.fireUntil) {
+        ctx.fillStyle = "#ef4444";
+      } else {
+        ctx.fillStyle = "#e5e7eb";
+      }
       ctx.arc(orb.x, orb.y, orb.r, 0, Math.PI * 2);
       ctx.fill();
     }
@@ -281,6 +500,22 @@
       initAudio();
       state.target = target;
       state.scores = [0, 0];
+      state.time = 0;
+      state.nextPowerupAt = 0;
+      players[0].has = null;
+      players[1].has = null;
+      players[0].active = null;
+      players[1].active = null;
+      players[0].shotsLeft = 0;
+      players[1].shotsLeft = 0;
+      players[0].activeUntil = 0;
+      players[1].activeUntil = 0;
+      players[0].freezeUntil = 0;
+      players[1].freezeUntil = 0;
+      players[0].powerKeyDown = false;
+      players[1].powerKeyDown = false;
+      players[0].powerKeyLocked = false;
+      players[1].powerKeyLocked = false;
       updateHud();
       menu.classList.add("hidden");
       game.classList.remove("hidden");
@@ -298,14 +533,69 @@
     });
 
     window.addEventListener("keydown", (e) => {
+      if (e.repeat) return;
       if (["ArrowUp", "ArrowDown", "KeyW", "KeyS"].includes(e.code)) {
         e.preventDefault();
         keys.add(e.code);
+      }
+      if (e.code === "Space") {
+        e.preventDefault();
+        players[0].powerKeyDown = true;
+        if (players[0].powerKeyLocked) return;
+        if (players[0].has && !players[0].active) {
+          if (players[0].has === "freeze") {
+            players[0].active = "freeze";
+            players[0].shotsLeft = 3;
+            players[0].activeUntil = state.time + 6;
+          } else if (players[0].has === "fire") {
+            players[0].active = "fire";
+          }
+          beep(360, 0.08, "triangle", 0.08);
+          updatePowerDisplays();
+        } else if (players[0].active === "freeze" && players[0].shotsLeft > 0) {
+          fireFreezeShot(0);
+          if (players[0].shotsLeft === 0) {
+            players[0].active = null;
+            players[0].has = null;
+            updatePowerDisplays();
+          }
+        }
+      }
+      if (e.code === "Numpad0") {
+        e.preventDefault();
+        players[1].powerKeyDown = true;
+        if (players[1].powerKeyLocked) return;
+        if (players[1].has && !players[1].active) {
+          if (players[1].has === "freeze") {
+            players[1].active = "freeze";
+            players[1].shotsLeft = 3;
+            players[1].activeUntil = state.time + 6;
+          } else if (players[1].has === "fire") {
+            players[1].active = "fire";
+          }
+          beep(360, 0.08, "triangle", 0.08);
+          updatePowerDisplays();
+        } else if (players[1].active === "freeze" && players[1].shotsLeft > 0) {
+          fireFreezeShot(1);
+          if (players[1].shotsLeft === 0) {
+            players[1].active = null;
+            players[1].has = null;
+            updatePowerDisplays();
+          }
+        }
       }
     });
 
     window.addEventListener("keyup", (e) => {
       keys.delete(e.code);
+      if (e.code === "Space") {
+        players[0].powerKeyDown = false;
+        players[0].powerKeyLocked = false;
+      }
+      if (e.code === "Numpad0") {
+        players[1].powerKeyDown = false;
+        players[1].powerKeyLocked = false;
+      }
     });
   </script>
 </body>

@@ -18,7 +18,7 @@ Created by Dark with the help of Codex.
 - Player 2 powerup activation: `Numpad0`
 
 ## Powerups
-Powerups spawn every 7 seconds (if none is on the field). Only one powerup can exist at a time. A player collects a powerup by hitting the powerup with the ball; the pickup is assigned to the last player who hit the ball. Each player can hold only one powerup at a time and must activate it with their activation key.
+Powerups spawn 7 seconds after the previous one is collected (only one can be on the field). A player collects a powerup by hitting it with the ball; the pickup is assigned to the last player who hit the ball. If a player already has a powerup and collects another, the new one replaces the old one. Each player can hold only one powerup at a time and must activate it with their activation key. The current held powerup is displayed under each player name on the HUD.
 
 ### 1) Freeze Enemy (Sky Blue)
 - **Collect:** Ball hits the sky-blue powerup; it is stored by the last player who hit the ball.
